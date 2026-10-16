@@ -1,0 +1,17 @@
+{
+  "name": "Report Vigneto – Fitochimica",
+  "short_name": "Report Vigneto",
+  "description": "Report delle visite in vigneto: modulo, foto, PDF per il cliente, archivio ed export Excel.",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6f3",
+  "theme_color": "#2f6b55",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

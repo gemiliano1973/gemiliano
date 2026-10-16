@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Report Vigneto</title>
+<meta name="description" content="Report delle visite in vigneto: modulo, foto, PDF per il cliente, archivio ed export Excel.">
+<meta name="theme-color" content="#2f6b55">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Report Vigneto">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><img src="logo.jpg" alt="Fitochimica — Specialisti in agricoltura" width="640" height="179"></div>
+  <h1>Report visita in vigneto</h1>
+  <p class="sub" id="status">Apertura archivio…</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tNew" aria-selected="true">Nuova visita</button>
+    <button role="tab" id="tArc" aria-selected="false">Archivio <span id="tCount" class="count"></span></button>
+  </div>
+
+  <!-- NUOVA VISITA -->
+  <section class="panel" id="pNew">
+    <form id="form" autocomplete="off" novalidate>
+      <div class="card">
+        <div class="band">Data visita</div>
+        <div class="f full"><label for="data">Data</label><input id="data" type="date" required></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="band">Dati azienda e vigneto</div>
+        <div class="grid">
+          <div class="f"><label for="azienda">Nome azienda</label><input id="azienda" list="aziendeList" required enterkeyhint="next" autocapitalize="words"></div>
+          <div class="f"><label for="localita">Località</label><input id="localita" list="localitaList" enterkeyhint="next" autocapitalize="words"></div>
+        </div>
+        <div class="f full"><label for="vigneto">Vigna</label><input id="vigneto" list="vignaList" enterkeyhint="next" autocapitalize="words"></div>
+        <div class="righehead"><span>Varietà / Vigneto</span><span>Superficie</span><span></span></div>
+        <div id="righe"></div>
+        <div class="addrow">
+          <button type="button" class="btn ghost" id="addRiga">+ Aggiungi varietà / vigneto</button>
+          <span class="tot" id="totHa"></span>
+        </div>
+        <div class="grid">
+          <div class="f"><label for="email">Email cliente</label><input id="email" type="email" list="emailList" inputmode="email" autocapitalize="off" placeholder="cliente@esempio.it"></div>
+          <div class="f"><label for="telefono">Cellulare cliente (WhatsApp)</label><input id="telefono" type="tel" list="telList" inputmode="tel" placeholder="es. 347 123 4567"></div>
+        </div>
+      </div>
+      <div class="card box" style="margin-top:16px">
+        <div class="f"><label for="monitoraggio">Monitoraggio</label><textarea id="monitoraggio" rows="6" placeholder="Fase fenologica, presenza di peronospora, oidio, tignoletta, stato vegetativo…"></textarea>
+          <details class="sugg" id="sg-monitoraggio" hidden><summary>Testi già usati</summary><div class="sgl"></div></details></div>
+      </div>
+      <div class="card box" style="margin-top:16px">
+        <div class="f"><label for="operazioni">Operazioni consigliate</label><textarea id="operazioni" rows="6" placeholder="Trattamenti, prodotti e dosi, tempistiche, lavorazioni…"></textarea>
+          <details class="sugg" id="sg-operazioni" hidden><summary>Testi già usati</summary><div class="sgl"></div></details></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="band">Documentazione fotografica <span id="phCount" style="font-weight:400"></span></div>
+        <div class="photos" id="photos"></div>
+        <div class="photobtns">
+          <label class="btn primary">Scatta foto<input id="camIn" type="file" accept="image/*" capture="environment" aria-label="Scatta foto"></label>
+          <label class="btn">Scegli dalla galleria<input id="galIn" type="file" accept="image/*" multiple aria-label="Scegli dalla galleria"></label>
+        </div>
+      </div>
+      <div class="btns" style="margin-top:16px">
+        <button class="btn primary" type="submit" id="saveBtn">Salva visita</button>
+        <button class="btn ghost" type="button" id="clearBtn">Svuota modulo</button>
+      </div>
+      <p class="note" id="editNote" hidden>Stai modificando una visita già salvata. <button class="btn ghost" type="button" id="cancelEdit" style="flex:none;min-height:0;padding:4px 10px">Annulla modifica</button></p>
+    </form>
+
+    <div class="done" id="done" hidden>
+      <strong id="doneTitle">Visita salvata</strong>
+      <div class="drivestate ok" id="doneState"></div>
+      <div class="btns">
+        <button class="btn primary" type="button" data-act="send">Invia al cliente</button>
+        <button class="btn" type="button" data-act="pdf">Scarica PDF</button>
+      </div>
+      <button class="btn ghost" type="button" id="newBtn">Nuova visita</button>
+    </div>
+  </section>
+
+  <!-- ARCHIVIO -->
+  <section class="panel" id="pArc" hidden>
+    <div class="bar">
+      <input id="q" type="search" placeholder="Cerca azienda, località, varietà…" aria-label="Cerca">
+      <button class="btn primary" type="button" id="xlsBtn" style="flex:0 1 auto">Esporta Excel</button>
+    </div>
+    <span class="count" id="listCount"></span>
+    <div class="list" id="list"></div>
+
+    <div class="card">
+      <div class="band">Firma delle email e dei messaggi</div>
+      <div class="f full"><label for="firma">Firma</label><textarea id="firma" rows="3" style="min-height:70px;border:0"></textarea></div>
+    </div>
+    <div class="card">
+      <div class="band">Backup dell'archivio</div>
+      <div class="f full" style="gap:10px">
+        <p class="note" style="margin:0">Le visite e le foto sono salvate solo su questo telefono. Fai un backup ogni tanto e conservalo su Drive o inviatelo per email: ti serve se cambi telefono o se il browser cancella i dati.</p>
+        <p class="note" style="margin:0" id="lastBackup"></p>
+        <div class="btns">
+          <button class="btn" type="button" id="bkOut">Esporta backup</button>
+          <label class="btn ghost filebtn">Importa backup<input id="bkIn" type="file" accept=".json,application/json" aria-label="Importa backup"></label>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<datalist id="aziendeList"></datalist>
+<datalist id="varietaList"></datalist>
+<datalist id="localitaList"></datalist>
+<datalist id="vignaList"></datalist>
+<datalist id="emailList"></datalist>
+<datalist id="telList"></datalist>
+<div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+<div class="sheet" id="install" hidden role="dialog" aria-modal="true" aria-labelledby="insTitle">
+  <div class="sheetbox">
+    <strong id="insTitle">Installa l'app sul telefono</strong>
+    <p class="note" style="margin:0" id="insText"></p>
+    <div class="btns">
+      <button class="btn primary" type="button" id="insOk" hidden>Installa</button>
+      <button class="btn ghost" type="button" id="insNo">Non ora</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="manual" hidden role="dialog" aria-modal="true" aria-labelledby="manTitle">
+  <div class="sheetbox">
+    <strong id="manTitle">Invia il report al cliente</strong>
+    <p class="note" style="margin:0" id="manTo"></p>
+    <div class="btns" id="shareRow">
+      <button class="btn primary" type="button" id="manShare">Condividi il PDF (WhatsApp, Gmail…)</button>
+    </div>
+    <p class="note" style="margin:0" id="shareHelp">Si apre il menu di condivisione del telefono con il PDF già allegato: scegli WhatsApp o Gmail e il cliente.</p>
+    <details class="sugg" id="manOther">
+      <summary>Altri modi</summary>
+      <div class="sgl" style="gap:8px">
+        <div class="btns"><button class="btn" type="button" id="manPdf">1. Scarica il PDF del report</button></div>
+        <div class="btns" id="manFotoRow"><button class="btn" type="button" id="manFoto">2. Scarica il PDF delle foto</button></div>
+        <div class="btns">
+          <a class="btn" id="manGmail" href="#" target="_blank" rel="noopener">Apri Gmail</a>
+          <a class="btn wa" id="manWa" href="#" target="_blank" rel="noopener">Apri WhatsApp</a>
+        </div>
+        <p class="note" style="margin:0"><a id="manMailto" href="#" style="color:var(--green)">Usa l'app di posta del telefono</a></p>
+        <p class="note" style="margin:0">Poi allega i PDF scaricati. Se il testo non compare, copialo da qui:</p>
+        <div class="copyrows">
+          <div class="copyrow"><span class="cl">A</span><span class="cv" id="cpToV"></span><button class="btn" type="button" data-cp="to">Copia</button></div>
+          <div class="copyrow"><span class="cl">Oggetto</span><span class="cv" id="cpSuV"></span><button class="btn" type="button" data-cp="su">Copia</button></div>
+          <div class="copyrow"><span class="cl">Testo</span><span class="cv" id="cpBoV"></span><button class="btn" type="button" data-cp="bo">Copia</button></div>
+        </div>
+      </div>
+    </details>
+    <div class="btns">
+      <button class="btn ghost" type="button" id="manClose">Chiudi</button>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/jspdf.umd.min.js" defer></script>
+<script src="vendor/exceljs.min.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
