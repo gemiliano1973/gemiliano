@@ -187,7 +187,7 @@ function readForm(){
   return v;
 }
 function fillForm(v){ FIELDS.forEach(f=>{ $(f).value = v[f]||''; }); renderRighe(righeOf(v)); photos=(v.foto||[]).map(p=>({...p})); renderPhotos(); saveDraft(); }
-function resetForm(){ FIELDS.forEach(f=>$(f).value=''); $('data').value=today(); renderRighe([{}]); photos=[]; renderPhotos(); editingId=null; $('editNote').hidden=true; $('saveBtn').textContent='Salva visita'; saveDraft(); }
+function resetForm(){ FIELDS.forEach(f=>$(f).value=''); $('data').value=today(); renderRighe([{}]); photos=[]; renderPhotos(); editingId=null; $('editNote').hidden=true; $('delEditRow').hidden=true; $('saveBtn').textContent='Salva visita'; saveDraft(); }
 function saveDraft(){ const d={}; FIELDS.forEach(f=>d[f]=$(f).value); d.righe=rawRighe(); d.foto=photos; d.editingId=editingId; ls.set('bozza', d); }
 $('form').addEventListener('input', saveDraft);
 
@@ -268,6 +268,12 @@ function showDone(v, edited){
 $('newBtn').onclick = ()=>{ $('done').hidden=true; $('form').hidden=false; lastSaved=null; };
 $('clearBtn').onclick = ()=>{ resetForm(); cleanupPhotos(); toast('Modulo svuotato.'); };
 $('cancelEdit').onclick = ()=>{ resetForm(); cleanupPhotos(); };
+$('delEdit').onclick = async ()=>{
+  const v=visite.find(x=>x.id===editingId); if(!v) return;
+  if(!confirm('Eliminare la visita di '+v.azienda+' del '+itDate(v.data)+'? Non si può annullare.')) return;
+  try{ resetForm(); await deleteVisit(v.id); toast('Visita eliminata.'); tab('arc'); }
+  catch(e){ toast('Eliminazione non riuscita: '+(e?.message||'errore')); }
+};
 $('done').addEventListener('click', e=>{ const b=e.target.closest('[data-act]'); if(b && lastSaved) doAct(b.dataset.act, lastSaved); });
 
 /* ---------- testi per il cliente ---------- */
@@ -630,7 +636,7 @@ function doAct(act, v){
   else if(act==='email' || act==='wa') sendVia(v, act);
   else if(act==='pdf') downloadPdf(v);
   else if(act==='fotopdf') downloadFotoPdf(v);
-  else if(act==='edit'){ fillForm(v); editingId=v.id; saveDraft(); $('editNote').hidden=false; $('saveBtn').textContent='Salva modifiche'; $('done').hidden=true; $('form').hidden=false; tab('new'); window.scrollTo({top:0}); }
+  else if(act==='edit'){ fillForm(v); editingId=v.id; saveDraft(); $('editNote').hidden=false; $('delEditRow').hidden=false; $('saveBtn').textContent='Salva modifiche'; $('done').hidden=true; $('form').hidden=false; tab('new'); window.scrollTo({top:0}); }
 }
 function filtered(){
   const q=$('q').value.trim().toLowerCase(), a=$('autoreSel').value;
@@ -902,7 +908,7 @@ async function init(){
   $('bkCard').hidden = CLOUD;
   try{
     await loadVisite();
-    if(editingId && visite.some(v=>v.id===editingId)){ $('editNote').hidden=false; $('saveBtn').textContent='Salva modifiche'; } else editingId=null;
+    if(editingId && visite.some(v=>v.id===editingId)){ $('editNote').hidden=false; $('delEditRow').hidden=false; $('saveBtn').textContent='Salva modifiche'; } else editingId=null;
     // foto della bozza che non sono più nell'archivio (es. dati cancellati dal browser)
     const have=new Set(await idb.keys('foto')); photos=photos.filter(p=>have.has(p.id)||p.path);
     renderPhotos(); cleanupPhotos();
