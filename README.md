@@ -6,7 +6,7 @@ App per compilare il report delle visite in vigneto, con le stesse funzioni del 
 - fino a 12 foto per visita, scattate o prese dalla galleria, con didascalia
 - compilazione automatica dall'ultima visita alla stessa azienda, vigna o varietà; testi già usati da riprendere
 - PDF del report con logo Fitochimica e PDF delle foto (una per pagina)
-- invio al cliente: menu di condivisione del telefono con i PDF già allegati (WhatsApp, Gmail…), oppure link a Gmail, WhatsApp e app di posta
+- invio al cliente con un tocco dopo il salvataggio: **Invia per email** e **Invia su WhatsApp** aprono l'app con destinatario e testo già pronti e il link per scaricare il PDF (valido 30 giorni); in alternativa **Allega il PDF…** apre il menu di condivisione del telefono con i file allegati
 - archivio con ricerca, modifica, eliminazione ed export Excel con le miniature delle foto
 - funziona anche senza connessione; la bozza del modulo, foto comprese, resta salvata se chiudi l'app
 

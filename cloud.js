@@ -68,8 +68,8 @@
     }
   };
 
-  Cloud.upload = async (path, blob) => {
-    const { error } = await sb.storage.from('foto').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+  Cloud.upload = async (path, blob, contentType = 'image/jpeg') => {
+    const { error } = await sb.storage.from('foto').upload(path, blob, { contentType, upsert: false });
     if(!error) return;
     const m = [error.message, error.error, error.statusCode, error.status].join(' ');
     if(/already exists|duplicate|\b409\b/i.test(m)) return;   // caricata in un invio precedente
@@ -79,6 +79,18 @@
     const { data, error } = await sb.storage.from('foto').download(path);
     if(error) throw fail(error, 'foto non scaricata');
     return data;
+  };
+  // indirizzo temporaneo, apribile da chiunque lo riceva (es. il cliente) finché non scade
+  Cloud.signedUrl = async (path, seconds) => {
+    const { data, error } = await sb.storage.from('foto').createSignedUrl(path, seconds);
+    if(error) throw fail(error, 'link non creato');
+    return data.signedUrl;
+  };
+  // PDF inviati ai clienti per una visita (stanno in <utente>/pdf/<id visita>-...)
+  Cloud.listPdfs = async (folder, visitId) => {
+    const { data, error } = await sb.storage.from('foto').list(folder + '/pdf', { search: visitId, limit: 100 });
+    if(error) throw fail(error);
+    return (data || []).filter(f => f.name.startsWith(visitId + '-')).map(f => folder + '/pdf/' + f.name);
   };
   Cloud.removeFiles = async paths => {
     const { error } = await sb.storage.from('foto').remove(paths);

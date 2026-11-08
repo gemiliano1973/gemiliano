@@ -349,6 +349,62 @@ async function showSend(v){
   };
 }
 
+/* ---------- invio con link al PDF (email / WhatsApp) ---------- */
+const LINK_SECONDS = 30*24*3600, MAX_PDF = 9.5*1024*1024;
+let sendingLink = false;
+const openExternal = url => (window.__apriEsterno || (u=>{ location.href=u; }))(url);
+function mailBodyLink(v, l){
+  return 'Gentile '+v.azienda+',\n\npuò scaricare il report della visita in vigneto del '+itDate(v.data)+(v.vigneto?' (vigna '+v.vigneto+')':'')+' da questo link:\n'+l.pdf
+    +(l.foto?'\n\nLe foto della visita sono qui:\n'+l.foto:'')+'\n\nI link restano validi per 30 giorni.\n\nResto a disposizione per qualsiasi chiarimento.\n\n'+firma();
+}
+function waTextLink(v, l){
+  return 'Buongiorno, le invio il report della visita in vigneto del '+itDate(v.data)+(v.vigneto?' (vigna '+v.vigneto+')':'')+' per '+v.azienda+':\n'+l.pdf
+    +(l.foto?'\n\nFoto della visita:\n'+l.foto:'')+'\n\n(i link restano validi 30 giorni)\n\n'+firma();
+}
+// carica i PDF nell'archivio e ne crea i link; per la stessa versione della visita il file è lo stesso
+async function publishPdf(v){
+  await logoData();
+  const base = me.id+'/pdf/'+v.id+'-'+(v.modificato||0);
+  const out = {};
+  toast('Preparo il PDF…');
+  await Cloud.upload(base+'.pdf', new Blob([buildPdf(v)],{type:'application/pdf'}), 'application/pdf');
+  out.pdf = await Cloud.signedUrl(base+'.pdf', LINK_SECONDS);
+  const keep = [base+'.pdf'];
+  if(v.foto?.length){
+    try{
+      toast('Preparo le foto…');
+      let buf = await photosPdf(v, null, null);
+      if(buf.byteLength>MAX_PDF) buf = await photosPdf(v, 1600, .8);
+      if(buf.byteLength>MAX_PDF) throw new Error('troppo grande');
+      await Cloud.upload(base+'-foto.pdf', new Blob([buf],{type:'application/pdf'}), 'application/pdf');
+      out.foto = await Cloud.signedUrl(base+'-foto.pdf', LINK_SECONDS);
+      keep.push(base+'-foto.pdf');
+    }catch(e){ if(Cloud.isNetworkError(e)) throw e; out.fotoErr = true; }
+  }
+  // toglie le versioni precedenti dello stesso report (solo quelle caricate da me)
+  Cloud.listPdfs(me.id, v.id).then(l=>{ const old=l.filter(x=>!keep.includes(x)); if(old.length) return Cloud.removeFiles(old); }).catch(()=>{});
+  return out;
+}
+async function sendVia(v, canale){
+  if(sendingLink) return;
+  if(!CLOUD || !me || !navigator.onLine){ toast('Senza connessione: allega il PDF dal menu di condivisione.'); showSend(v); return; }
+  sendingLink = true;
+  try{
+    const l = await publishPdf(v);
+    const href = canale==='email'
+      ? 'mailto:'+(v.email||'')+'?subject='+encodeURIComponent(mailSubject(v))+'&body='+encodeURIComponent(mailBodyLink(v,l))
+      : 'https://wa.me/'+(waNumber(v.telefono)||'')+'?text='+encodeURIComponent(waTextLink(v,l));
+    if(canale==='email' && !v.email) toast('Manca l\'email del cliente: scrivila tu nel messaggio, o aggiungila con Modifica.');
+    else if(canale==='wa' && !v.telefono) toast('Manca il cellulare del cliente: scegli tu la chat in WhatsApp.');
+    else if(l.fotoErr) toast('Le foto non si sono caricate: il messaggio contiene solo il link al report.');
+    await markSent(v);
+    openExternal(href);
+  }catch(e){
+    toast(Cloud.isNetworkError(e) ? 'Senza connessione: allega il PDF dal menu di condivisione.' : 'Link non creato: '+(e?.message||'errore')+'. Prova con "Allega il PDF…".');
+    if(Cloud.isNetworkError(e)) showSend(v);
+  }finally{ sendingLink = false; }
+}
+
 /* ---------- file da scaricare ---------- */
 function saveFile(filename, blob){
   const u=URL.createObjectURL(blob);
@@ -570,6 +626,7 @@ $('bkIn').addEventListener('change', async e=>{
 /* ---------- archivio ---------- */
 function doAct(act, v){
   if(act==='send') showSend(v);
+  else if(act==='email' || act==='wa') sendVia(v, act);
   else if(act==='pdf') downloadPdf(v);
   else if(act==='fotopdf') downloadFotoPdf(v);
   else if(act==='edit'){ fillForm(v); editingId=v.id; saveDraft(); $('editNote').hidden=false; $('saveBtn').textContent='Salva modifiche'; $('done').hidden=true; $('form').hidden=false; tab('new'); window.scrollTo({top:0}); }
@@ -622,7 +679,9 @@ function render(){
         ${v.foto?.length?`<div><h4>Foto</h4><div class="thumbs">${v.foto.map((p,i)=>`<img loading="lazy" data-pid="${esc(p.id)}" data-ppath="${esc(p.path||'')}" alt="${esc(p.caption||'Foto '+(i+1))}">`).join('')}</div></div>`:''}
         <div class="note">${v.email?'Email cliente: '+esc(v.email):'Email cliente mancante'}${v.telefono?' · Cell: '+esc(v.telefono):''}${CLOUD&&v.autoreEmail?' · Compilata da: <span class="who">'+esc(v.autoreEmail)+'</span>':''}${CLOUD&&v._stato==='mod'?' · <span class="syncwarn">da inviare all\'archivio</span>':''}${v.inviataIl?' · <span class="sent">inviato il '+esc(new Date(v.inviataIl).toLocaleString('it-IT'))+'</span>':''}</div>
         <div class="btns">
-          <button class="btn primary" data-act="send">Invia al cliente</button>
+          <button class="btn primary" data-act="email">Email al cliente</button>
+          <button class="btn wa" data-act="wa">WhatsApp</button>
+          <button class="btn" data-act="send">Allega il PDF…</button>
           <button class="btn" data-act="pdf">Scarica PDF</button>
           ${v.foto?.length?'<button class="btn" data-act="fotopdf">Scarica foto</button>':''}
           ${canEdit(v)?'<button class="btn" data-act="edit">Modifica</button><button class="btn danger" data-act="del">Elimina</button>':''}
@@ -713,6 +772,9 @@ async function pushDelete(v){
   await Cloud.remove(v.id);
   const paths=(v.foto||[]).map(p=>p.path).filter(Boolean);
   if(paths.length){ try{ await Cloud.removeFiles(paths); }catch(e){} }
+  try{                                               // PDF inviati ai clienti: i miei e quelli dell'autore
+    for(const f of new Set([me.id, v.autoreId].filter(Boolean))){ const l=await Cloud.listPdfs(f, v.id); if(l.length) await Cloud.removeFiles(l); }
+  }catch(e){}
   await idb.del('visite', v.id);
 }
 async function pushAll(){
