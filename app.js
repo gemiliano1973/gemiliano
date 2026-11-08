@@ -568,8 +568,8 @@ $('xlsBtn').onclick = async ()=>{
       if(++nr%10===0) toast('Preparo l\'Excel… '+nr+' di '+list.length);
       const [y,m,d]=(v.data||'').split('-').map(Number);
       const fo=v.foto||[];
-      // una riga per ogni varietà: i dati della visita si ripetono (così si filtra e si somma bene);
-      // monitoraggio, operazioni, didascalie e foto stanno solo sulla prima riga della visita
+      // una riga per ogni varietà: i dati della visita (compresi monitoraggio e operazioni) si ripetono su ogni riga;
+      // solo didascalie e foto stanno sulla prima riga della visita
       const rows=righeOf(v), vr = rows.length ? rows : [{varieta:'', superficie:null}];
       let row=null;
       vr.forEach((r,i)=>{
@@ -577,7 +577,7 @@ $('xlsBtn').onclick = async ()=>{
         const rw=ws.addRow({
           data: v.data? new Date(Date.UTC(y,m-1,d)) : '', azienda:v.azienda||'', localita:v.localita||'', vigneto:v.vigneto||'',
           varieta: r.varieta||'', superficie: r.superficie==null?null:r.superficie,
-          monitoraggio: first ? (v.monitoraggio||'') : '', operazioni: first ? (v.operazioni||'') : '',
+          monitoraggio: v.monitoraggio||'', operazioni: v.operazioni||'',
           email:v.email||'', telefono:v.telefono||'', inviato: v.inviataIl? new Date(v.inviataIl).toLocaleString('it-IT') : '', autore: v.autoreEmail||'',
           didascalie: first ? fo.map((p,k)=>p.caption?('Foto '+(k+1)+': '+p.caption):'').filter(Boolean).join('\n') : ''
         });
