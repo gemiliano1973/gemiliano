@@ -551,7 +551,7 @@ $('xlsBtn').onclick = async ()=>{
       {header:'Data visita',key:'data',width:12,style:{numFmt:'dd/mm/yyyy'}},
       {header:'Azienda',key:'azienda',width:26},{header:'Località',key:'localita',width:18},
       {header:'Vigna',key:'vigneto',width:16},{header:'Varietà / Vigneto',key:'varieta',width:30},
-      {header:'Superficie totale (ha)',key:'superficie',width:16,style:{numFmt:'0.00'}},
+      {header:'Superficie (ha)',key:'superficie',width:14,style:{numFmt:'0.00'}},
       {header:'Monitoraggio',key:'monitoraggio',width:50},{header:'Operazioni consigliate',key:'operazioni',width:50},
       {header:'Email cliente',key:'email',width:26},{header:'Cellulare cliente',key:'telefono',width:16},
       {header:'Inviato al cliente il',key:'inviato',width:18},
@@ -568,15 +568,26 @@ $('xlsBtn').onclick = async ()=>{
       if(++nr%10===0) toast('Preparo l\'Excel… '+nr+' di '+list.length);
       const [y,m,d]=(v.data||'').split('-').map(Number);
       const fo=v.foto||[];
-      const row=ws.addRow({
-        data: v.data? new Date(Date.UTC(y,m-1,d)) : '', azienda:v.azienda||'', localita:v.localita||'', vigneto:v.vigneto||'',
-        varieta: righeOf(v).map(r=>(r.varieta||'—')+(r.superficie!=null?' ('+haTxt(r.superficie)+')':'')).join('\n'),
-        superficie: v.superficie==null?null:v.superficie, monitoraggio:v.monitoraggio||'', operazioni:v.operazioni||'',
-        email:v.email||'', telefono:v.telefono||'', inviato: v.inviataIl? new Date(v.inviataIl).toLocaleString('it-IT') : '', autore: v.autoreEmail||'',
-        didascalie: fo.map((p,i)=>p.caption?('Foto '+(i+1)+': '+p.caption):'').filter(Boolean).join('\n')
+      // una riga per ogni varietà: i dati della visita si ripetono (così si filtra e si somma bene);
+      // monitoraggio, operazioni, didascalie e foto stanno solo sulla prima riga della visita
+      const rows=righeOf(v), vr = rows.length ? rows : [{varieta:'', superficie:null}];
+      let row=null;
+      vr.forEach((r,i)=>{
+        const first = i===0;
+        const rw=ws.addRow({
+          data: v.data? new Date(Date.UTC(y,m-1,d)) : '', azienda:v.azienda||'', localita:v.localita||'', vigneto:v.vigneto||'',
+          varieta: r.varieta||'', superficie: r.superficie==null?null:r.superficie,
+          monitoraggio: first ? (v.monitoraggio||'') : '', operazioni: first ? (v.operazioni||'') : '',
+          email:v.email||'', telefono:v.telefono||'', inviato: v.inviataIl? new Date(v.inviataIl).toLocaleString('it-IT') : '', autore: v.autoreEmail||'',
+          didascalie: first ? fo.map((p,k)=>p.caption?('Foto '+(k+1)+': '+p.caption):'').filter(Boolean).join('\n') : ''
+        });
+        rw.alignment={vertical:'top', wrapText:true};
+        if(first){
+          row=rw;
+          if(fo.length) rw.height=100;
+          rw.eachCell({includeEmpty:true}, c=>{ c.border={top:{style:'thin',color:{argb:'FF2F6B55'}}}; });   // separa una visita dalla successiva
+        }
       });
-      row.alignment={vertical:'top', wrapText:true};
-      if(fo.length) row.height=100;
       for(let k=0;k<fo.length;k++){
         try{
           const full=await photoData(fo[k]);
