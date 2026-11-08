@@ -387,6 +387,7 @@ async function publishPdf(v){
 }
 async function sendVia(v, canale){
   if(sendingLink) return;
+  if(CLOUD && !Cloud.signedUrl){ toast('L\'app si sta aggiornando: chiudila del tutto e riaprila, poi riprova.'); return; }
   if(!CLOUD || !me || !navigator.onLine){ toast('Senza connessione: allega il PDF dal menu di condivisione.'); showSend(v); return; }
   sendingLink = true;
   try{
