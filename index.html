@@ -16,7 +16,23 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
+<div class="login" id="login" hidden>
+  <div class="loginbox">
+    <div class="brand"><img src="logo.jpg" alt="Fitochimica" width="640" height="179"></div>
+    <h1>Accedi</h1>
+    <p class="note" style="margin:0 0 12px">Entra con l'email e la password che ti ha dato l'amministratore.</p>
+    <form id="loginForm" class="card" autocomplete="on">
+      <div class="f full"><label for="lgEmail">Email</label><input id="lgEmail" name="username" type="email" inputmode="email" autocomplete="username" autocapitalize="off" required></div>
+      <div class="f full"><label for="lgPw">Password</label><input id="lgPw" name="password" type="password" autocomplete="current-password" required></div>
+      <div class="f full" style="flex-direction:row;align-items:center;gap:8px"><input id="lgShow" type="checkbox" style="width:auto"><label for="lgShow" style="text-transform:none;letter-spacing:0;font:500 .9rem var(--body);color:var(--muted)">Mostra la password</label></div>
+      <div class="f full"><button class="btn primary" type="submit" id="lgBtn">Accedi</button></div>
+    </form>
+    <p class="loginerr" id="loginErr" role="alert"></p>
+    <p class="note">Hai dimenticato la password? Chiedi all'amministratore di impostarne una nuova.</p>
+  </div>
+</div>
+
+<div class="wrap" id="wrap">
   <div class="brand"><img src="logo.jpg" alt="Fitochimica — Specialisti in agricoltura" width="640" height="179"></div>
   <h1>Report visita in vigneto</h1>
   <p class="sub" id="status">Apertura archivio…</p>
@@ -91,14 +107,32 @@
       <input id="q" type="search" placeholder="Cerca azienda, località, varietà…" aria-label="Cerca">
       <button class="btn primary" type="button" id="xlsBtn" style="flex:0 1 auto">Esporta Excel</button>
     </div>
+    <div class="bar" id="autoreBar" hidden><select id="autoreSel" aria-label="Filtra per autore"></select></div>
     <span class="count" id="listCount"></span>
     <div class="list" id="list"></div>
 
+    <div class="card" id="accCard" hidden>
+      <div class="band">Account e archivio condiviso</div>
+      <div class="f full" style="gap:10px">
+        <p class="note" style="margin:0" id="accInfo"></p>
+        <div class="btns">
+          <button class="btn primary" type="button" id="syncBtn">Sincronizza ora</button>
+          <button class="btn ghost" type="button" id="logoutBtn">Esci</button>
+        </div>
+        <details class="sugg">
+          <summary>Cambia password</summary>
+          <div class="sgl" style="gap:8px">
+            <input id="newPw" type="password" autocomplete="new-password" placeholder="Nuova password (almeno 8 caratteri)" aria-label="Nuova password" style="border:1px solid var(--rule);border-radius:8px;padding:10px 12px;background:var(--paper)">
+            <button class="btn" type="button" id="pwBtn">Salva la nuova password</button>
+          </div>
+        </details>
+      </div>
+    </div>
     <div class="card">
       <div class="band">Firma delle email e dei messaggi</div>
       <div class="f full"><label for="firma">Firma</label><textarea id="firma" rows="3" style="min-height:70px;border:0"></textarea></div>
     </div>
-    <div class="card">
+    <div class="card" id="bkCard">
       <div class="band">Backup dell'archivio</div>
       <div class="f full" style="gap:10px">
         <p class="note" style="margin:0">Le visite e le foto sono salvate solo su questo telefono. Fai un backup ogni tanto e conservalo su Drive o inviatelo per email: ti serve se cambi telefono o se il browser cancella i dati.</p>
@@ -163,6 +197,9 @@
   </div>
 </div>
 
+<script src="vendor/supabase.js" defer></script>
+<script src="config.js" defer></script>
+<script src="cloud.js" defer></script>
 <script src="vendor/jspdf.umd.min.js" defer></script>
 <script src="vendor/exceljs.min.js" defer></script>
 <script src="app.js" defer></script>

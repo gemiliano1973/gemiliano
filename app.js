@@ -17,6 +17,10 @@ function safeName(s){ return (s||'azienda').replace(/[^\w\-àèéìòù ]+/gi,''
 function esc(s){ const d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML.replace(/"/g,'&quot;'); }
 const newId = p => p+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const lc = s => (s||'').trim().toLowerCase();
+const CLOUD = !!(window.Cloud && Cloud.enabled);
+let me = null;                       // utente collegato: {id, email, admin}
+const nomeAutore = v => { const e=(v&&v.autoreEmail)||''; const n=e.split('@')[0].replace(/[._-]+/g,' ').trim(); return n ? n.replace(/\b\w/g, c=>c.toUpperCase()) : ''; };
+const canEdit = v => !CLOUD || !v.autoreId || (!!me && (v.autoreId===me.id || me.admin));
 
 /* ---------- archivio sul telefono (IndexedDB) ---------- */
 const idb = (() => {
@@ -46,6 +50,7 @@ const idb = (() => {
     get: (s, k) => run(s, 'readonly', st => st.get(k)),
     put: (s, v, k) => run(s, 'readwrite', st => k===undefined ? st.put(v) : st.put(v, k)),
     del: (s, k) => run(s, 'readwrite', st => st.delete(k)),
+    clear: s => run(s, 'readwrite', st => st.clear()),
   };
 })();
 
@@ -54,7 +59,7 @@ let editingId = null;
 let lastSaved = null;
 
 function sortV(){ visite.sort((a,b)=> (b.data||'').localeCompare(a.data||'') || (b.creato||0)-(a.creato||0)); }
-async function loadVisite(){ visite = await idb.all('visite'); sortV(); render(); }
+async function loadVisite(){ visite = (await idb.all('visite')).filter(v=>v._stato!=='del'); sortV(); render(); }
 async function saveVisit(v){
   if(!v.id) v.id = newId('v');
   await idb.put('visite', v);
@@ -62,14 +67,20 @@ async function saveVisit(v){
   sortV(); render(); return v;
 }
 async function deleteVisit(id){
-  await idb.del('visite', id);
+  const v = visite.find(x=>x.id===id);
+  // nell'archivio condiviso la cancellazione va comunicata al server: si tiene un segno finché non è inviata
+  if(CLOUD && v && v._remoto) await idb.put('visite', {...v, _stato:'del'}); else await idb.del('visite', id);
   visite = visite.filter(v=>v.id!==id); render();
   await cleanupPhotos();
+  if(CLOUD) { await refreshPending(); scheduleSync(); }
 }
 async function markSent(v){
+  if(!canEdit(v)) return;   // sulle visite degli altri non si scrive
   v.inviataIl = new Date().toISOString();
+  if(CLOUD) v._stato = 'mod';
   try{ await idb.put('visite', v); }catch(e){}
   render();
+  if(CLOUD){ await refreshPending(); scheduleSync(); }
 }
 
 /* ---------- varietà / vigneti (righe ripetibili) ---------- */
@@ -114,15 +125,22 @@ function shrink(img, max, q){ const {c,w,h}=shrinkCanvas(img,max); return {data:
 function shrinkBlob(img, max, q){ const {c,w,h}=shrinkCanvas(img,max); return new Promise((res,rej)=>c.toBlob(b=>b?res({blob:b,w,h}):rej(new Error('foto non elaborabile')),'image/jpeg',q)); }
 function blobToDataURL(b){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(r.error); r.readAsDataURL(b); }); }
 async function dataURLToBlob(d){ return (await fetch(d)).blob(); }
-async function photoBlob(id){ const b=await idb.get('foto', id); if(!b) throw new Error('foto mancante'); return b; }
-async function photoData(p){ return {data: await blobToDataURL(await photoBlob(p.id)), w:p.w, h:p.h}; }
-async function thumbSrc(id){
-  if(thumbUrl.has(id)) return thumbUrl.get(id);
-  const u=URL.createObjectURL(await photoBlob(id)); thumbUrl.set(id,u); return u;
+// la foto è sul telefono; se è di un'altra persona si scarica dall'archivio condiviso e si tiene in memoria
+async function photoBlob(p){
+  let b = await idb.get('foto', p.id);
+  if(b) return b;
+  if(CLOUD && p.path){ b = await Cloud.download(p.path); try{ await idb.put('foto', b, p.id); }catch(e){} return b; }
+  throw new Error('foto mancante');
+}
+async function photoData(p){ return {data: await blobToDataURL(await photoBlob(p)), w:p.w, h:p.h}; }
+async function thumbSrc(p){
+  if(thumbUrl.has(p.id)) return thumbUrl.get(p.id);
+  const u=URL.createObjectURL(await photoBlob(p)); thumbUrl.set(p.id,u); return u;
 }
 async function hydrateThumbs(root){
   for(const img of root.querySelectorAll('img[data-pid]')){
-    try{ img.src = await thumbSrc(img.dataset.pid); }catch(e){ img.alt='Foto non disponibile'; }
+    if(img.getAttribute('src')) continue;
+    try{ img.src = await thumbSrc({id:img.dataset.pid, path:img.dataset.ppath||''}); }catch(e){ img.alt='Foto non disponibile'; }
   }
 }
 async function addFiles(list){
@@ -131,7 +149,7 @@ async function addFiles(list){
     if(f.type && !f.type.startsWith('image/')) continue;
     const u=URL.createObjectURL(f);
     try{
-      const r=await shrinkBlob(await loadImg(u), 2560, .88);
+      const r=await shrinkBlob(await loadImg(u), 2048, .85);
       const id=newId('f'); await idb.put('foto', r.blob, id);
       photos.push({id, w:r.w, h:r.h, caption:''});
     }catch(e){ toast('Questa foto non si riesce a leggere o salvare.'); }
@@ -143,7 +161,7 @@ function renderPhotos(){
   $('phCount').textContent = photos.length ? '('+photos.length+')' : '';
   const box=$('photos');
   if(!photos.length){ box.innerHTML='<div class="photoempty">Nessuna foto. Scatta le foto in vigneto: finiranno nel PDF per il cliente e nel file Excel.</div>'; return; }
-  box.innerHTML = photos.map((p,i)=>`<div class="ph"><img data-pid="${esc(p.id)}" alt="Foto ${i+1}"><span class="n">${i+1}</span>
+  box.innerHTML = photos.map((p,i)=>`<div class="ph"><img data-pid="${esc(p.id)}" data-ppath="${esc(p.path||'')}" alt="Foto ${i+1}"><span class="n">${i+1}</span>
     <button type="button" class="rm" data-rm="${i}" aria-label="Rimuovi foto ${i+1}">×</button>
     <input id="cap-${i}" data-cap="${i}" value="${esc(p.caption||'')}" placeholder="Didascalia (facoltativa)" aria-label="Didascalia foto ${i+1}"></div>`).join('');
   hydrateThumbs(box);
@@ -220,14 +238,21 @@ $('form').addEventListener('submit', async e=>{
   const old = editingId ? visite.find(x=>x.id===editingId) : null;
   if(old){ v.id=old.id; v.creato=old.creato; if(old.inviataIl) v.inviataIl=old.inviataIl; }
   else v.creato=Date.now();
+  if(CLOUD){
+    if(old && !canEdit(old)){ toast('Questa visita è di '+(nomeAutore(old)||'un altro utente')+': puoi modificarla solo tu se ne sei l\'autore, oppure un amministratore.'); return; }
+    v.autoreId = old?.autoreId || me.id; v.autoreEmail = old?.autoreEmail || me.email;
+    if(old?._remoto) v._remoto = true;
+    v._stato = 'mod';
+  }
   v.modificato=Date.now();
-  v.foto = photos.map(p=>({id:p.id, w:p.w, h:p.h, caption:(p.caption||'').trim()}));
+  v.foto = photos.map(p=>{ const f={id:p.id, w:p.w, h:p.h, caption:(p.caption||'').trim()}; if(p.path) f.path=p.path; return f; });
   $('saveBtn').disabled = true;
   try{
     lastSaved = await saveVisit(v);
     showDone(lastSaved, !!old);
     photos=[]; resetForm();
     cleanupPhotos();
+    if(CLOUD){ await refreshPending(); scheduleSync(800); }
   }catch(err){ toast('Salvataggio non riuscito: '+(err?.message||'riprova')+'. I dati restano nel modulo.'); }
   finally{ $('saveBtn').disabled=false; }
 });
@@ -235,7 +260,9 @@ function showDone(v, edited){
   $('form').hidden = true; $('done').hidden = false;
   $('doneTitle').textContent = (edited?'Visita aggiornata: ':'Visita salvata: ')+v.azienda+' – '+itDate(v.data);
   const n=(v.foto||[]).length;
-  $('doneState').textContent='✓ Scheda salvata nell\'archivio del telefono'+(n?' con '+n+' foto':'')+'. La ritrovi in Archivio, anche senza connessione.';
+  $('doneState').textContent = CLOUD
+    ? '✓ Scheda salvata sul telefono'+(n?' con '+n+' foto':'')+'. Va nell\'archivio condiviso appena c\'è connessione: gli altri la vedranno da lì.'
+    : '✓ Scheda salvata nell\'archivio del telefono'+(n?' con '+n+' foto':'')+'. La ritrovi in Archivio, anche senza connessione.';
   window.scrollTo({top:0});
 }
 $('newBtn').onclick = ()=>{ $('done').hidden=true; $('form').hidden=false; lastSaved=null; };
@@ -452,7 +479,8 @@ $('xlsBtn').onclick = async ()=>{
   if(!window.ExcelJS){ toast('Il generatore Excel non si è caricato. Chiudi e riapri l\'app.'); return; }
   const btn=$('xlsBtn'); btn.disabled=true; toast('Preparo il file Excel con le foto…');
   try{
-    const list=[...visite].sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+    const list=[...filtered()].sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+    if(!list.length){ toast('Nessuna visita da esportare con questo filtro.'); return; }
     const nFoto=Math.max(0, ...list.map(v=>(v.foto||[]).length));
     const wb=new ExcelJS.Workbook(); wb.creator='Fitochimica';
     const ws=wb.addWorksheet('Visite vigneto',{views:[{state:'frozen', ySplit:1}]});
@@ -464,6 +492,7 @@ $('xlsBtn').onclick = async ()=>{
       {header:'Monitoraggio',key:'monitoraggio',width:50},{header:'Operazioni consigliate',key:'operazioni',width:50},
       {header:'Email cliente',key:'email',width:26},{header:'Cellulare cliente',key:'telefono',width:16},
       {header:'Inviato al cliente il',key:'inviato',width:18},
+      {header:'Compilata da',key:'autore',width:22},
       {header:'Didascalie foto',key:'didascalie',width:30}
     ];
     const base=cols.length;
@@ -471,14 +500,16 @@ $('xlsBtn').onclick = async ()=>{
     ws.columns=cols;
     const head=ws.getRow(1); head.height=22;
     head.eachCell(c=>{ c.font={bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF2F6B55'}}; c.alignment={vertical:'middle'}; });
+    let nr=0;
     for(const v of list){
+      if(++nr%10===0) toast('Preparo l\'Excel… '+nr+' di '+list.length);
       const [y,m,d]=(v.data||'').split('-').map(Number);
       const fo=v.foto||[];
       const row=ws.addRow({
         data: v.data? new Date(Date.UTC(y,m-1,d)) : '', azienda:v.azienda||'', localita:v.localita||'', vigneto:v.vigneto||'',
         varieta: righeOf(v).map(r=>(r.varieta||'—')+(r.superficie!=null?' ('+haTxt(r.superficie)+')':'')).join('\n'),
         superficie: v.superficie==null?null:v.superficie, monitoraggio:v.monitoraggio||'', operazioni:v.operazioni||'',
-        email:v.email||'', telefono:v.telefono||'', inviato: v.inviataIl? new Date(v.inviataIl).toLocaleString('it-IT') : '',
+        email:v.email||'', telefono:v.telefono||'', inviato: v.inviataIl? new Date(v.inviataIl).toLocaleString('it-IT') : '', autore: v.autoreEmail||'',
         didascalie: fo.map((p,i)=>p.caption?('Foto '+(i+1)+': '+p.caption):'').filter(Boolean).join('\n')
       });
       row.alignment={vertical:'top', wrapText:true};
@@ -501,12 +532,12 @@ $('xlsBtn').onclick = async ()=>{
 };
 
 /* ---------- backup ---------- */
-function showLastBackup(){ const t=ls.get('ultimoBackup',null); $('lastBackup').textContent = t ? 'Ultimo backup: '+new Date(t).toLocaleString('it-IT')+'.' : 'Nessun backup ancora fatto.'; }
+function showLastBackup(){ if(CLOUD) return; const t=ls.get('ultimoBackup',null); $('lastBackup').textContent = t ? 'Ultimo backup: '+new Date(t).toLocaleString('it-IT')+'.' : 'Nessun backup ancora fatto.'; }
 $('bkOut').onclick = async ()=>{
   const btn=$('bkOut'); btn.disabled=true; toast('Preparo il backup…');
   try{
     const foto={};
-    for(const v of visite) for(const p of (v.foto||[])){ try{ foto[p.id]=await blobToDataURL(await photoBlob(p.id)); }catch(e){} }
+    for(const v of visite) for(const p of (v.foto||[])){ try{ foto[p.id]=await blobToDataURL(await photoBlob(p)); }catch(e){} }
     const bk={app:'report-vigneto', versione:1, creato:new Date().toISOString(), firma:$('firma').value, visite, foto};
     const blob=new Blob([JSON.stringify(bk)],{type:'application/json'});
     const name='Backup_report_vigneto_'+today()+'.json';
@@ -543,6 +574,20 @@ function doAct(act, v){
   else if(act==='fotopdf') downloadFotoPdf(v);
   else if(act==='edit'){ fillForm(v); editingId=v.id; saveDraft(); $('editNote').hidden=false; $('saveBtn').textContent='Salva modifiche'; $('done').hidden=true; $('form').hidden=false; tab('new'); window.scrollTo({top:0}); }
 }
+function filtered(){
+  const q=$('q').value.trim().toLowerCase(), a=$('autoreSel').value;
+  return visite.filter(v=>
+    (!q || [v.azienda,v.localita,v.vigneto,v.varieta,v.monitoraggio,v.operazioni,v.autoreEmail].join(' ').toLowerCase().includes(q)) &&
+    (!a || (a==='me' ? v.autoreId===me?.id : (v.autoreEmail||'')===a)));
+}
+function renderAutori(){
+  $('autoreBar').hidden = !CLOUD;
+  if(!CLOUD) return;
+  const sel=$('autoreSel'), cur=sel.value;
+  const autori=[...new Set(visite.map(v=>v.autoreEmail).filter(Boolean))].sort();
+  sel.innerHTML='<option value="">Tutte le visite</option><option value="me">Solo le mie</option>'+autori.map(a=>'<option value="'+esc(a)+'">Compilate da '+esc(a)+'</option>').join('');
+  sel.value = [...sel.options].some(o=>o.value===cur) ? cur : '';
+}
 function render(){
   $('tCount').textContent = visite.length ? '('+visite.length+')' : '';
   const uniq = arr => { const seen=new Map(); for(const x of arr){ const t=(x||'').trim(); if(t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t); } return [...seen.values()]; };
@@ -558,9 +603,11 @@ function render(){
     const d=$('sg-'+f); d.hidden=!texts.length;
     d.querySelector('.sgl').innerHTML = texts.map(t=>`<button type="button" data-sg="${f}" data-text="${esc(t)}">${esc(t.length>140?t.slice(0,140)+'…':t)}</button>`).join('');
   }
+  renderAutori();
   const q=$('q').value.trim().toLowerCase();
-  const shown = visite.filter(v=>!q || [v.azienda,v.localita,v.vigneto,v.varieta,v.monitoraggio,v.operazioni].join(' ').toLowerCase().includes(q));
-  $('listCount').textContent = visite.length ? (q? shown.length+' di '+visite.length+' visite' : visite.length+(visite.length===1?' visita':' visite')) : '';
+  const shown = filtered();
+  const filtro = q || $('autoreSel').value;
+  $('listCount').textContent = visite.length ? (filtro? shown.length+' di '+visite.length+' visite' : visite.length+(visite.length===1?' visita':' visite')) : '';
   const list=$('list');
   if(!visite.length){ list.innerHTML='<div class="empty">Nessuna visita salvata.<br>Compila il modulo in "Nuova visita" e premi Salva: comparirà qui.</div>'; return; }
   if(!shown.length){ list.innerHTML='<div class="empty">Nessuna visita corrisponde alla ricerca.</div>'; return; }
@@ -568,18 +615,17 @@ function render(){
   list.innerHTML = shown.map(v=>`
     <details class="item" data-id="${esc(v.id)}" ${open.has(v.id)?'open':''}>
       <summary><span class="d">${esc(itDate(v.data))}</span><span class="a">${esc(v.azienda)}${v.inviataIl?'<span class="pill">Inviato</span>':''}</span>
-      <span class="m">${esc([v.localita, v.vigneto, v.varieta, v.superficie==null?'':haTxt(v.superficie), v.foto?.length?v.foto.length+' foto':''].filter(Boolean).join(' · ')||'—')}</span></summary>
+      <span class="m">${esc([CLOUD?nomeAutore(v):'', v.localita, v.vigneto, v.varieta, v.superficie==null?'':haTxt(v.superficie), v.foto?.length?v.foto.length+' foto':''].filter(Boolean).join(' · ')||'—')}</span></summary>
       <div class="body">
         <div><h4>Monitoraggio</h4><p>${esc(v.monitoraggio||'—')}</p></div>
         <div><h4>Operazioni consigliate</h4><p>${esc(v.operazioni||'—')}</p></div>
-        ${v.foto?.length?`<div><h4>Foto</h4><div class="thumbs">${v.foto.map((p,i)=>`<img loading="lazy" data-pid="${esc(p.id)}" alt="${esc(p.caption||'Foto '+(i+1))}">`).join('')}</div></div>`:''}
-        <div class="note">${v.email?'Email cliente: '+esc(v.email):'Email cliente mancante'}${v.telefono?' · Cell: '+esc(v.telefono):''}${v.inviataIl?' · <span class="sent">inviato il '+esc(new Date(v.inviataIl).toLocaleString('it-IT'))+'</span>':''}</div>
+        ${v.foto?.length?`<div><h4>Foto</h4><div class="thumbs">${v.foto.map((p,i)=>`<img loading="lazy" data-pid="${esc(p.id)}" data-ppath="${esc(p.path||'')}" alt="${esc(p.caption||'Foto '+(i+1))}">`).join('')}</div></div>`:''}
+        <div class="note">${v.email?'Email cliente: '+esc(v.email):'Email cliente mancante'}${v.telefono?' · Cell: '+esc(v.telefono):''}${CLOUD&&v.autoreEmail?' · Compilata da: <span class="who">'+esc(v.autoreEmail)+'</span>':''}${CLOUD&&v._stato==='mod'?' · <span class="syncwarn">da inviare all\'archivio</span>':''}${v.inviataIl?' · <span class="sent">inviato il '+esc(new Date(v.inviataIl).toLocaleString('it-IT'))+'</span>':''}</div>
         <div class="btns">
           <button class="btn primary" data-act="send">Invia al cliente</button>
           <button class="btn" data-act="pdf">Scarica PDF</button>
           ${v.foto?.length?'<button class="btn" data-act="fotopdf">Scarica foto</button>':''}
-          <button class="btn" data-act="edit">Modifica</button>
-          <button class="btn danger" data-act="del">Elimina</button>
+          ${canEdit(v)?'<button class="btn" data-act="edit">Modifica</button><button class="btn danger" data-act="del">Elimina</button>':''}
         </div>
         <div class="confirm" data-confirm hidden>Eliminare questa visita? <button class="btn danger" data-act="delyes" style="flex:none">Sì, elimina</button><button class="btn ghost" data-act="delno" style="flex:none">Annulla</button></div>
       </div>
@@ -598,6 +644,7 @@ $('list').addEventListener('click', async e=>{
   doAct(act, v);
 });
 $('q').addEventListener('input', render);
+$('autoreSel').addEventListener('change', render);
 $('firma').addEventListener('input', ()=>ls.set('firma', $('firma').value));
 
 /* ---------- schede ---------- */
@@ -623,6 +670,161 @@ window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); installE
 $('insOk').onclick=async()=>{ $('install').hidden=true; if(!installEvt) return; installEvt.prompt(); try{ await installEvt.userChoice; }catch(e){} installEvt=null; };
 $('insNo').onclick=()=>{ $('install').hidden=true; ls.set('noInstall', Date.now()+7*864e5); };
 
+/* ---------- archivio condiviso: accesso e sincronizzazione ---------- */
+let syncing=false, syncTimer=null, pending=0, syncErr='';
+let lastSync = ls.get('ultimaSync', null);
+const docOf = v => { const d={...v}; delete d._stato; delete d._remoto; return d; };
+async function refreshPending(){ try{ pending=(await idb.all('visite')).filter(v=>v._stato==='mod'||v._stato==='del').length; }catch(e){} renderAccount(); }
+const hhmm = t => new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+function renderAccount(){
+  if(!CLOUD) return;
+  $('accCard').hidden = !me;
+  if(!me) return;
+  const ruolo = me.admin ? 'amministratore' : 'utente';
+  $('accInfo').innerHTML = 'Collegato come <strong>'+esc(me.email)+'</strong> ('+ruolo+'). '
+    + (syncing ? 'Sincronizzo…' : syncErr ? '<span class="syncwarn">'+esc(syncErr)+'</span>' : lastSync ? '<span class="syncok">Archivio aggiornato alle '+hhmm(lastSync)+'.</span>' : 'Non ancora sincronizzato.')
+    + (pending ? ' <span class="syncwarn">'+pending+(pending===1?' modifica':' modifiche')+' da inviare.</span>' : '');
+  $('syncBtn').disabled = syncing;
+  const st=$('status'); st.style.color = syncErr ? 'var(--danger)' : '';
+  st.textContent = syncing ? 'Sincronizzo con l\'archivio condiviso…'
+    : syncErr ? syncErr
+    : (pending ? pending+(pending===1?' modifica':' modifiche')+' da inviare appena c\'è connessione. ' : '') + (lastSync ? 'Archivio condiviso aggiornato alle '+hhmm(lastSync)+'.' : 'Archivio condiviso.');
+}
+async function pushVisit(v){
+  const foto=[];
+  for(const p of v.foto||[]){
+    if(p.path){ foto.push(p); continue; }
+    const blob = await idb.get('foto', p.id);
+    if(!blob) continue;                              // foto non più sul telefono: non si può inviare
+    const path = me.id+'/'+p.id+'.jpg';
+    await Cloud.upload(path, blob);
+    foto.push({...p, path});
+  }
+  await Cloud.upsert({ id:v.id, autore_id:v.autoreId||me.id, autore_email:v.autoreEmail||me.email, data:v.data||null, azienda:v.azienda||'', doc:docOf({...v, foto}) });
+  const cur = await idb.get('visite', v.id);
+  if(!cur) return;
+  if(cur.modificato===v.modificato && cur.inviataIl===v.inviataIl) await idb.put('visite', {...cur, foto, _stato:'ok', _remoto:true});
+  else{                                              // cambiata mentre la inviavo: resta da inviare, ma le foto già caricate si ricordano
+    const paths=new Map(foto.map(p=>[p.id,p.path]));
+    await idb.put('visite', {...cur, _remoto:true, foto:(cur.foto||[]).map(p=>p.path||!paths.get(p.id)?p:{...p,path:paths.get(p.id)})});
+  }
+}
+async function pushDelete(v){
+  await Cloud.remove(v.id);
+  const paths=(v.foto||[]).map(p=>p.path).filter(Boolean);
+  if(paths.length){ try{ await Cloud.removeFiles(paths); }catch(e){} }
+  await idb.del('visite', v.id);
+}
+async function pushAll(){
+  let failed=0, why='';
+  for(const v of await idb.all('visite')){
+    if(v._stato!=='mod' && v._stato!=='del') continue;
+    try{ if(v._stato==='mod') await pushVisit(v); else await pushDelete(v); }
+    catch(e){
+      if(Cloud.isNetworkError(e)) throw e;
+      failed++; why = why || (e?.message||'errore');
+      if(v._stato==='del') await idb.put('visite', {...v, _stato:'ok'});   // non eliminabile: torna visibile
+    }
+  }
+  return failed ? failed+(failed===1?' visita non inviata':' visite non inviate')+' ('+why+')' : '';
+}
+async function pullAll(){
+  const rows = await Cloud.list();
+  const local = new Map((await idb.all('visite')).map(v=>[v.id,v]));
+  const seen = new Set();
+  for(const r of rows){
+    seen.add(r.id);
+    const l = local.get(r.id), d = r.doc||{};
+    if(l && (l._stato==='mod'||l._stato==='del')) continue;                  // ho modifiche mie ancora da inviare
+    if(l && l.modificato===d.modificato && l.inviataIl===d.inviataIl) continue;   // già aggiornata
+    await idb.put('visite', {...d, id:r.id, _stato:'ok', _remoto:true});
+  }
+  for(const [id,l] of local) if(l._stato==='ok' && !seen.has(id)) await idb.del('visite', id);   // eliminata da qualcun altro
+  await loadVisite();
+  cleanupPhotos();
+}
+async function sync(){
+  if(!CLOUD || !me || syncing) return false;
+  if(!navigator.onLine){ syncErr='Senza connessione: le modifiche si inviano appena torna il campo.'; renderAccount(); return false; }
+  syncing=true; syncErr=''; renderAccount();
+  let ok=false;
+  try{
+    const { session, error } = await Cloud.getSession();
+    if(!session){
+      if(Cloud.isNetworkError(error)){ syncErr='Archivio non raggiungibile ora: riprovo più tardi.'; return false; }
+      lockApp('La sessione è scaduta: accedi di nuovo. I dati sul telefono restano.'); return false;
+    }
+    try{ const a=await Cloud.isAdmin(); if(a!==me.admin){ me.admin=a; ls.set('utente', me); render(); } }catch(e){ if(Cloud.isNetworkError(e)) throw e; }
+    const pushed = await pushAll();
+    await pullAll();
+    lastSync=Date.now(); ls.set('ultimaSync', lastSync);
+    syncErr = pushed;
+    ok = !pushed;
+  }catch(e){
+    syncErr = Cloud.isNetworkError(e) ? 'Archivio non raggiungibile ora: riprovo più tardi.' : 'Sincronizzazione non riuscita: '+(e?.message||'errore');
+  }finally{ syncing=false; await refreshPending(); }
+  return ok;
+}
+function scheduleSync(ms=1500){ if(!CLOUD||!me) return; clearTimeout(syncTimer); syncTimer=setTimeout(sync, ms); }
+$('syncBtn').onclick = async ()=>{ const ok=await sync(); toast(ok?'Archivio aggiornato.':(syncErr||'Sincronizzazione non riuscita.')); };
+window.addEventListener('online', ()=>scheduleSync(500));
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) scheduleSync(500); });
+setInterval(()=>{ if(!document.hidden) scheduleSync(0); }, 90000);
+
+function lockApp(msg){
+  me=null; clearTimeout(syncTimer);
+  $('wrap').hidden=true; $('login').hidden=false; $('loginErr').textContent=msg||'';
+  $('lgBtn').disabled=false; $('lgBtn').textContent='Accedi';
+  setTimeout(()=>$('lgEmail').focus(),50);
+}
+async function enterApp(user){
+  me=user; ls.set('utente', me);
+  $('login').hidden=true; $('wrap').hidden=false; $('lgPw').value='';
+  // visite create su questo telefono prima del collegamento: diventano del primo utente che accede
+  for(const v of await idb.all('visite')){
+    if(v._stato===undefined) await idb.put('visite', {...v, autoreId:v.autoreId||me.id, autoreEmail:v.autoreEmail||me.email, modificato:v.modificato||v.creato||Date.now(), _stato:'mod'});
+  }
+  await loadVisite(); await refreshPending();
+  sync();
+}
+$('lgShow').addEventListener('change', e=>{ $('lgPw').type = e.target.checked ? 'text' : 'password'; });
+$('loginForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const email=$('lgEmail').value.trim(), pw=$('lgPw').value;
+  if(!email||!pw){ $('loginErr').textContent='Scrivi email e password.'; return; }
+  $('lgBtn').disabled=true; $('lgBtn').textContent='Accedo…'; $('loginErr').textContent='';
+  try{
+    const session = await Cloud.login(email, pw);
+    const user={id:session.user.id, email:session.user.email||email, admin:false};
+    try{ user.admin = await Cloud.isAdmin(); }catch(e){}
+    await enterApp(user);
+  }catch(err){
+    $('lgBtn').disabled=false; $('lgBtn').textContent='Accedi';
+    const m=String(err?.message||'');
+    $('loginErr').textContent = Cloud.isNetworkError(err) || !navigator.onLine ? 'Serve la connessione per il primo accesso.'
+      : /invalid login|invalid credentials|credentials/i.test(m) ? 'Email o password non corrette.'
+      : 'Accesso non riuscito: '+(m||'errore')+'.';
+  }
+});
+$('logoutBtn').onclick = async ()=>{
+  toast('Controllo i dati da inviare…');
+  await sync(); await refreshPending();
+  if(pending && !confirm('Ci sono '+pending+(pending===1?' modifica':' modifiche')+' non ancora inviate all\'archivio: se esci le perdi. Esci lo stesso?')) return;
+  await Cloud.logout();
+  try{ await idb.clear('visite'); await idb.clear('foto'); }catch(e){}
+  for(const u of thumbUrl.values()) URL.revokeObjectURL(u); thumbUrl.clear();
+  ls.set('utente', null); ls.set('ultimaSync', null); lastSync=null; syncErr=''; pending=0;
+  visite=[]; lastSaved=null; resetForm(); render();
+  $('done').hidden=true; $('form').hidden=false; tab('new');
+  lockApp('');
+};
+$('pwBtn').onclick = async ()=>{
+  const pw=$('newPw').value;
+  if(pw.length<8){ toast('La password deve avere almeno 8 caratteri.'); return; }
+  try{ await Cloud.changePassword(pw); $('newPw').value=''; toast('Password cambiata.'); }
+  catch(e){ toast('Password non cambiata: '+(e?.message||'errore')); }
+};
+
 /* ---------- avvio ---------- */
 async function init(){
   $('firma').value = ls.get('firma', FIRMA_DEFAULT);
@@ -634,18 +836,29 @@ async function init(){
   }
   renderRighe(draft?.righe?.length ? draft.righe : [{}]);
   if(!$('data').value) $('data').value = today();
+  $('bkCard').hidden = CLOUD;
   try{
     await loadVisite();
     if(editingId && visite.some(v=>v.id===editingId)){ $('editNote').hidden=false; $('saveBtn').textContent='Salva modifiche'; } else editingId=null;
     // foto della bozza che non sono più nell'archivio (es. dati cancellati dal browser)
-    const have=new Set(await idb.keys('foto')); photos=photos.filter(p=>have.has(p.id));
+    const have=new Set(await idb.keys('foto')); photos=photos.filter(p=>have.has(p.id)||p.path);
     renderPhotos(); cleanupPhotos();
-    let persist=false; try{ persist = await navigator.storage?.persist?.(); }catch(e){}
-    $('status').textContent = 'Archivio sul telefono, funziona anche senza connessione.'+(persist?'':' Ricordati di fare un backup ogni tanto (in Archivio).');
+    if(!CLOUD){
+      let persist=false; try{ persist = await navigator.storage?.persist?.(); }catch(e){}
+      $('status').textContent = (window.Cloud?.error ? window.Cloud.error+' ' : '')+'Archivio sul telefono, funziona anche senza connessione.'+(persist?'':' Ricordati di fare un backup ogni tanto (in Archivio).');
+    }
   }catch(e){
     renderPhotos();
     $('status').textContent = 'Archivio non disponibile su questo browser: '+(e?.message||'errore')+'. Se sei in navigazione privata, aprila in una finestra normale.';
     $('status').style.color='var(--danger)';
+  }
+  if(CLOUD){
+    // accesso: sessione salvata, oppure ultimo utente se non c'è campo
+    const { session, error } = await Cloud.getSession();
+    const saved = ls.get('utente', null);
+    if(session) await enterApp({id:session.user.id, email:session.user.email, admin: saved?.id===session.user.id && !!saved.admin});
+    else if(saved && (Cloud.isNetworkError(error) || !navigator.onLine)) await enterApp(saved);
+    else lockApp('');
   }
   logoData();
   if(/iPhone|iPad|iPod/i.test(navigator.userAgent)) setTimeout(offerInstall, 1500);

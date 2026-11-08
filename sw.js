@@ -1,7 +1,8 @@
 // Tiene l'app sul telefono, così si apre anche senza connessione in vigneto.
-const CACHE = 'report-vigneto-v1';
+const CACHE = 'report-vigneto-v2';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'logo.jpg', 'manifest.webmanifest',
+  'config.js', 'cloud.js', 'vendor/supabase.js',
   'vendor/jspdf.umd.min.js', 'vendor/exceljs.min.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'
 ];

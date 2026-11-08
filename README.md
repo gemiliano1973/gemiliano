@@ -10,7 +10,10 @@ App per compilare il report delle visite in vigneto, con le stesse funzioni del 
 - archivio con ricerca, modifica, eliminazione ed export Excel con le miniature delle foto
 - funziona anche senza connessione; la bozza del modulo, foto comprese, resta salvata se chiudi l'app
 
-Tutti i dati restano sul telefono (archivio del browser). Usa **Archivio → Esporta backup** ogni tanto e conserva il file: con **Importa backup** lo ricarichi su un telefono nuovo.
+Due modi di funzionare:
+
+- **Solo sul telefono** (predefinito): i dati restano sul telefono. Usa **Archivio → Esporta backup** ogni tanto: con **Importa backup** lo ricarichi su un telefono nuovo.
+- **Archivio condiviso con accesso:** ogni persona entra con email e password e tutte le visite e le foto stanno in un unico archivio consultabile da tutti. Si attiva compilando `config.js`: segui **[SETUP.md](SETUP.md)**.
 
 ## Pubblicarla
 
@@ -31,7 +34,9 @@ Tutti i dati restano sul telefono (archivio del browser). Usa **Archivio → Esp
 | --- | --- |
 | `index.html` | struttura delle schermate |
 | `style.css` | grafica |
-| `app.js` | logica: archivio, foto, PDF, Excel, invio, backup |
+| `app.js` | logica: archivio, foto, PDF, Excel, invio, backup, accesso e sincronizzazione |
+| `cloud.js`, `config.js` | collegamento all'archivio condiviso (Supabase) e sue impostazioni |
+| `supabase/` | tabelle e regole di accesso da eseguire una volta (`schema.sql`, `primo-admin.sql`) |
 | `sw.js` | funzionamento senza connessione |
 | `manifest.webmanifest`, `icons/` | nome e icona dell'app |
-| `vendor/` | librerie jsPDF 2.5.1 ed ExcelJS 4.4.0 |
+| `vendor/` | librerie jsPDF 2.5.1, ExcelJS 4.4.0, supabase-js 2.119.0 |
